@@ -1,26 +1,35 @@
 #!/bin/bash
+
 set -e
 
 echo "=== WiFi Connect kurulumu başlatılıyor... ==="
 
-# 1. Paketlerin kurulumu
+# 1. Gerekli paketlerin kurulumu
 echo "1. Paketlerin kurulumu..."
-apt update
-apt install -y network-manager dnsmasq hostapd jq curl
+sudo apt update
+sudo apt install -y dnsmasq hostapd network-manager curl jq
 
-# 2. Wifi Connect indirme ve kurulum
+# 2. wifi-connect indirme
 echo "2. WiFi Connect indiriliyor..."
 WC_VERSION="v4.4.6"
-WC_FILE="wifi-connect-${WC_VERSION}-linux-aarch64.tar.gz"
-curl -L -o /tmp/$WC_FILE "https://github.com/balena-os/wifi-connect/releases/download/${WC_VERSION}/$WC_FILE"
-tar -xzf /tmp/$WC_FILE -C /tmp
-mv /tmp/wifi-connect /usr/local/bin/wifi-connect
-chmod +x /usr/local/bin/wifi-connect
+ARCH=$(uname -m)
+if [ "$ARCH" = "aarch64" ]; then
+    WC_ARCH="linux-aarch64"
+else
+    echo "Desteklenmeyen mimari: $ARCH"
+    exit 1
+fi
+cd /tmp
+curl -L -o wifi-connect.tar.gz https://github.com/balena-os/wifi-connect/releases/download/$WC_VERSION/wifi-connect-$WC_VERSION-$WC_ARCH.tar.gz
+tar -xzf wifi-connect.tar.gz
+sudo mv wifi-connect-$WC_VERSION-$WC_ARCH/wifi-connect /usr/local/bin/
+sudo chmod +x /usr/local/bin/wifi-connect
+rm -rf wifi-connect-$WC_VERSION-$WC_ARCH wifi-connect.tar.gz
 
 # 3. Config dizini ve dosyası
 echo "3. Config dizini ve dosyası oluşturuluyor..."
-mkdir -p /etc/wifi-connect
-cat > /etc/wifi-connect/config.json <<EOF
+sudo mkdir -p /etc/wifi-connect
+sudo tee /etc/wifi-connect/config.json > /dev/null <<EOF
 {
     "portal_ssid": "WiFi Connect",
     "portal_password": "12345678",
@@ -31,49 +40,47 @@ cat > /etc/wifi-connect/config.json <<EOF
 }
 EOF
 
-# 4. Wrapper script
+# 4. Wrapper script oluşturma
 echo "4. Wrapper script oluşturuluyor..."
-cat > /usr/local/sbin/wifi-connect-wrapper.sh <<'EOF'
+sudo tee /usr/local/sbin/wifi-connect-wrapper.sh > /dev/null <<'EOF'
 #!/bin/bash
 WLAN_IF="wlan0"
 
-# IP kontrolü
+# IP varsa AP başlatma
 IP_CHECK=$(ip addr show $WLAN_IF | grep "inet " || true)
-
 if [ -n "$IP_CHECK" ]; then
-    echo "$(date) - WiFi bağlı ve IP alınmış. AP başlatılmayacak."
+    echo "WiFi bağlı ve IP alınmış. AP başlatılmayacak."
     exit 0
 else
-    echo "$(date) - WiFi bağlı değil veya IP yok. WiFi Connect AP başlatılıyor."
-    exec /usr/local/bin/wifi-connect --portal-ip 192.168.42.1 --config /etc/wifi-connect/config.json
+    echo "WiFi bağlı değil veya IP yok. WiFi Connect AP başlatılıyor."
+    /usr/local/bin/wifi-connect
 fi
 EOF
 
-chmod +x /usr/local/sbin/wifi-connect-wrapper.sh
+sudo chmod +x /usr/local/sbin/wifi-connect-wrapper.sh
 
-# 5. Systemd servisi
+# 5. Systemd servisi oluşturma
 echo "5. Systemd servisi oluşturuluyor..."
-cat > /etc/systemd/system/wifi-connect.service <<'EOF'
+sudo tee /etc/systemd/system/wifi-connect.service > /dev/null <<'EOF'
 [Unit]
 Description=WiFi Connect AP
-After=network.target
+After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=oneshot
 ExecStart=/usr/local/sbin/wifi-connect-wrapper.sh
-Restart=on-failure
-RestartSec=10
+RemainAfterExit=yes
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
 # 6. Servisi etkinleştirme
-echo "6. Servisi etkinleştiriliyor..."
-systemctl daemon-reload
-systemctl enable wifi-connect.service
-systemctl restart wifi-connect.service
+echo "6. Servisi etkinleştir ve başlat..."
+sudo systemctl daemon-reload
+sudo systemctl enable wifi-connect.service
+sudo systemctl start wifi-connect.service
 
-echo "=== Kurulum tamamlandı! ==="
-systemctl status wifi-connect.service --no-pager
+echo "=== Kurulum tamamlandı! Servis durumu: ==="
+sudo systemctl status wifi-connect.service
