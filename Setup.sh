@@ -3,77 +3,77 @@ set -e
 
 echo "=== WiFi Connect kurulumu başlatılıyor... ==="
 
-# Gereken paketleri kur
-sudo apt update
-sudo apt install -y curl dnsmasq network-manager jq
+# 1. Paketlerin kurulumu
+echo "1. Paketlerin kurulumu..."
+apt update
+apt install -y network-manager dnsmasq hostapd jq curl
 
-# WiFi Connect binary'sini indir
-if [ ! -f /usr/local/bin/wifi-connect ]; then
-    echo "WiFi Connect indiriliyor..."
-    ARCH=$(uname -m)
-    case "$ARCH" in
-        aarch64) FILE="wifi-connect-v4.4.2-linux-aarch64" ;;
-        armv7l)  FILE="wifi-connect-v4.4.2-linux-armv7hf" ;;
-        x86_64)  FILE="wifi-connect-v4.4.2-linux-x64" ;;
-        *) echo "Desteklenmeyen mimari: $ARCH"; exit 1 ;;
-    esac
+# 2. Wifi Connect indirme ve kurulum
+echo "2. WiFi Connect indiriliyor..."
+WC_VERSION="v4.4.6"
+WC_FILE="wifi-connect-${WC_VERSION}-linux-aarch64.tar.gz"
+curl -L -o /tmp/$WC_FILE "https://github.com/balena-os/wifi-connect/releases/download/${WC_VERSION}/$WC_FILE"
+tar -xzf /tmp/$WC_FILE -C /tmp
+mv /tmp/wifi-connect /usr/local/bin/wifi-connect
+chmod +x /usr/local/bin/wifi-connect
 
-    curl -L -o /usr/local/bin/wifi-connect "https://github.com/balena-os/wifi-connect/releases/download/v4.4.2/$FILE"
-    chmod +x /usr/local/bin/wifi-connect
-    echo "WiFi Connect başarıyla kuruldu."
-fi
+# 3. Config dizini ve dosyası
+echo "3. Config dizini ve dosyası oluşturuluyor..."
+mkdir -p /etc/wifi-connect
+cat > /etc/wifi-connect/config.json <<EOF
+{
+    "portal_ssid": "WiFi Connect",
+    "portal_password": "12345678",
+    "portal_ip": "192.168.42.1",
+    "portal_port": 80,
+    "wifi_scan_timeout": 10,
+    "wifi_scan_repeat": 3
+}
+EOF
 
-# Wrapper script oluştur
-cat << 'EOF' | sudo tee /usr/local/sbin/wifi-connect-wrapper.sh > /dev/null
+# 4. Wrapper script
+echo "4. Wrapper script oluşturuluyor..."
+cat > /usr/local/sbin/wifi-connect-wrapper.sh <<'EOF'
 #!/bin/bash
-set -e
+WLAN_IF="wlan0"
 
-echo "$(date) - WiFi Connect servisi başlatılıyor..."
+# IP kontrolü
+IP_CHECK=$(ip addr show $WLAN_IF | grep "inet " || true)
 
-IFACE="wlan0"
-if ! nmcli device | grep -q "$IFACE"; then
-  echo "Wi-Fi arayüzü ($IFACE) bulunamadı!"
-  exit 1
-fi
-
-if ! nmcli -t -f WIFI g | grep -q "enabled"; then
-  nmcli radio wifi on
-fi
-
-CONNECTED=$(nmcli -t -f DEVICE,STATE dev | grep "$IFACE" | grep "connected" || true)
-if [ -z "$CONNECTED" ]; then
-  echo "Wi-Fi bağlantısı yok, erişim noktası başlatılıyor..."
-  /usr/local/bin/wifi-connect \
-    --portal-ssid "DeviceSetup" \
-    --portal-passphrase "12345678"
+if [ -n "$IP_CHECK" ]; then
+    echo "$(date) - WiFi bağlı ve IP alınmış. AP başlatılmayacak."
+    exit 0
 else
-  echo "Wi-Fi zaten bağlı, erişim noktası başlatılmayacak."
+    echo "$(date) - WiFi bağlı değil veya IP yok. WiFi Connect AP başlatılıyor."
+    exec /usr/local/bin/wifi-connect --portal-ip 192.168.42.1 --config /etc/wifi-connect/config.json
 fi
 EOF
 
-sudo chmod +x /usr/local/sbin/wifi-connect-wrapper.sh
+chmod +x /usr/local/sbin/wifi-connect-wrapper.sh
 
-# systemd servisini oluştur
-cat << 'EOF' | sudo tee /etc/systemd/system/wifi-connect.service > /dev/null
+# 5. Systemd servisi
+echo "5. Systemd servisi oluşturuluyor..."
+cat > /etc/systemd/system/wifi-connect.service <<'EOF'
 [Unit]
 Description=WiFi Connect AP
-After=network.target NetworkManager.service
-StartLimitIntervalSec=0
+After=network.target
+Wants=network-online.target
 
 [Service]
+Type=simple
 ExecStart=/usr/local/sbin/wifi-connect-wrapper.sh
-Restart=always
-RestartSec=15
-User=root
+Restart=on-failure
+RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# Servisi başlat
-sudo systemctl daemon-reload
-sudo systemctl enable wifi-connect.service
-sudo systemctl restart wifi-connect.service
+# 6. Servisi etkinleştirme
+echo "6. Servisi etkinleştiriliyor..."
+systemctl daemon-reload
+systemctl enable wifi-connect.service
+systemctl restart wifi-connect.service
 
-echo "=== WiFi Connect servisi başarıyla kuruldu ve başlatıldı! ==="
-sudo systemctl status wifi-connect.service --no-pager
+echo "=== Kurulum tamamlandı! ==="
+systemctl status wifi-connect.service --no-pager
