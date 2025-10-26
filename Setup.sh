@@ -1,69 +1,76 @@
 #!/bin/bash
 set -e
 
-echo "1. Paketlerin kurulumu..."
+echo "=== WiFi Connect kurulumu başlatılıyor... ==="
+
+# Gereken paketleri kur
 sudo apt update
-sudo apt install -y network-manager iw wireless-tools curl dnsmasq hostapd
+sudo apt install -y curl dnsmasq network-manager jq
 
-echo "2. Wifi-Connect indirme ve kurulum..."
-cd /tmp
-curl -L -o wifi-connect.tar.gz https://github.com/balena-os/wifi-connect/releases/download/v4.4.6/wifi-connect-v4.4.6-linux-aarch64.tar.gz
-tar -xzf wifi-connect.tar.gz
-sudo mv wifi-connect /usr/local/sbin/
-sudo chmod +x /usr/local/sbin/wifi-connect
+# wifi-connect'i indir ve kur
+if [ ! -f /usr/local/bin/wifi-connect ]; then
+    echo "WiFi Connect indiriliyor..."
+    curl -L https://github.com/balena-os/wifi-connect/releases/latest/download/wifi-connect-arm64.tar.gz -o /tmp/wifi-connect.tar.gz
+    tar -xzf /tmp/wifi-connect.tar.gz -C /tmp
+    sudo mv /tmp/wifi-connect /usr/local/bin/
+    sudo chmod +x /usr/local/bin/wifi-connect
+    echo "WiFi Connect başarıyla kuruldu."
+fi
 
-echo "3. Config dizini ve dosyasını oluşturma..."
-sudo mkdir -p /etc/wifi-connect
-sudo tee /etc/wifi-connect/config.json > /dev/null <<EOF
-{
-    "portal_ssid": "WiFi Connect",
-    "portal_password": "12345678",
-    "portal_ip": "192.168.42.1",
-    "portal_port": 80,
-    "wifi_scan_timeout": 10,
-    "wifi_scan_repeat": 3
-}
-EOF
-
-echo "4. Wrapper script oluşturma..."
-sudo tee /usr/local/sbin/wifi-connect-wrapper.sh > /dev/null <<'EOF'
+# Wrapper script oluştur
+cat << 'EOF' | sudo tee /usr/local/sbin/wifi-connect-wrapper.sh > /dev/null
 #!/bin/bash
-WLAN_IF="wlan0"
+set -e
 
-# IP var mı kontrol et
-IP_CHECK=$(ip addr show $WLAN_IF | grep "inet " || true)
+echo "$(date) - WiFi Connect servisi başlatılıyor..."
 
-if [ -n "$IP_CHECK" ]; then
-    echo "$(date) - WiFi bağlı ve IP alınmış. AP başlatılmayacak."
-    exit 0
+# wlan0 var mı kontrol et
+IFACE="wlan0"
+if ! nmcli device | grep -q "$IFACE"; then
+  echo "Wi-Fi arayüzü ($IFACE) bulunamadı!"
+  exit 1
+fi
+
+# Aktif bağlantı yoksa WiFi Connect başlat
+if ! nmcli -t -f WIFI g | grep -q "enabled"; then
+  nmcli radio wifi on
+fi
+
+CONNECTED=$(nmcli -t -f DEVICE,STATE dev | grep "$IFACE" | grep "connected" || true)
+if [ -z "$CONNECTED" ]; then
+  echo "Wi-Fi bağlantısı yok, erişim noktası başlatılıyor..."
+  /usr/local/bin/wifi-connect \
+    --portal-ssid "DeviceSetup" \
+    --portal-passphrase "12345678" \
+    --ui-directory /usr/local/share/wifi-connect/ui
 else
-    echo "$(date) - WiFi bağlı değil veya IP yok. WiFi Connect AP başlatılıyor."
-    exec /usr/local/sbin/wifi-connect --config /etc/wifi-connect/config.json
+  echo "Wi-Fi zaten bağlı, erişim noktası başlatılmayacak."
 fi
 EOF
+
 sudo chmod +x /usr/local/sbin/wifi-connect-wrapper.sh
 
-echo "5. Systemd servisi oluşturma..."
-sudo tee /etc/systemd/system/wifi-connect.service > /dev/null <<EOF
+# systemd servisi oluştur
+cat << 'EOF' | sudo tee /etc/systemd/system/wifi-connect.service > /dev/null
 [Unit]
 Description=WiFi Connect AP
-After=network.target
-Wants=network-online.target
+After=network.target NetworkManager.service
+StartLimitIntervalSec=0
 
 [Service]
-Type=simple
 ExecStart=/usr/local/sbin/wifi-connect-wrapper.sh
-Restart=on-failure
-RestartSec=10
+Restart=always
+RestartSec=15
+User=root
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-echo "6. Servisi etkinleştirme..."
+# Servisi etkinleştir ve başlat
 sudo systemctl daemon-reload
 sudo systemctl enable wifi-connect.service
 sudo systemctl restart wifi-connect.service
 
-echo "Kurulum tamamlandı! Servisin durumu:"
-sudo systemctl status wifi-connect.service
+echo "=== WiFi Connect servisi başarıyla kuruldu ve başlatıldı! ==="
+sudo systemctl status wifi-connect.service --no-pager
