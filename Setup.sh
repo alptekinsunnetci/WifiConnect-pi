@@ -8,12 +8,15 @@ echo "=== WiFi Connect kurulumu başlatılıyor... ==="
 # 1. Gerekli paketler
 echo "1. Paketlerin kurulumu..."
 sudo apt update
-sudo apt install -y dnsmasq hostapd network-manager curl jq
+sudo apt install -y dnsmasq hostapd network-manager curl jq tar
 
-# 2. wifi-connect ikililerini indir
-echo "2. WiFi Connect indiriliyor..."
-sudo curl -L -o /usr/local/bin/wifi-connect https://github.com/alptekinsunnetci/WifiConnect-pi/raw/main/wifi-connect
-sudo chmod +x /usr/local/bin/wifi-connect
+# 2. wifi-connect indir ve kur
+echo "2. WiFi Connect indiriliyor ve kuruluyor..."
+curl -L https://github.com/balena-os/wifi-connect/releases/download/v4.4.6/wifi-connect-v4.4.6-linux-aarch64.tar.gz -o wifi-connect.tar.gz
+tar -xzf wifi-connect.tar.gz
+sudo mv wifi-connect /usr/local/sbin/
+sudo chmod +x /usr/local/sbin/wifi-connect
+rm -f wifi-connect.tar.gz
 
 # 3. Wrapper script oluşturuluyor
 echo "3. Wrapper script oluşturuluyor..."
@@ -36,7 +39,7 @@ sudo nmcli radio wifi on
 # WiFi bağlantısı kontrolü
 if nmcli -t -f WIFI g | grep -q "enabled"; then
     echo "$(date) - WiFi cihaz aktif, AP başlatılacak..."
-    sudo /usr/local/bin/wifi-connect --portal-interface wlan0
+    sudo /usr/local/sbin/wifi-connect --portal-interface wlan0
 else
     echo "$(date) - WiFi bağlı ve IP alınmış. AP başlatılmayacak."
 fi
