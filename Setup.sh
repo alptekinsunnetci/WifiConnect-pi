@@ -56,7 +56,7 @@ EOF
 sudo chmod +x /usr/local/sbin/wifi-connect-wrapper.sh
 echo "Wrapper script hazır."
 
-# 3️⃣ Startup olarak ekle (rc.local)
+# Startup olarak ekle (rc.local)
 echo "Startup için /etc/rc.local ayarlanıyor..."
 sudo bash -c 'cat << EOF > /etc/rc.local
 #!/bin/bash
