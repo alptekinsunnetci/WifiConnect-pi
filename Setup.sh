@@ -1,71 +1,71 @@
 #!/bin/bash
-# === WiFi Connect Setup Script ===
+# Setup script for WiFi Connect autostart
 
 set -e
 
-echo "=== WiFi Connect kurulumu başlatılıyor... ==="
+echo "=== WiFi Connect Setup Başlatılıyor ==="
 
-# 1. Gerekli paketler
-echo "1. Paketlerin kurulumu..."
-sudo apt update
-sudo apt install -y dnsmasq hostapd network-manager curl jq tar
-
-# 2. wifi-connect indir ve kur
-echo "2. WiFi Connect indiriliyor ve kuruluyor..."
-curl -L https://github.com/balena-os/wifi-connect/releases/download/v4.4.6/wifi-connect-v4.4.6-linux-aarch64.tar.gz -o wifi-connect.tar.gz
-tar -xzf wifi-connect.tar.gz
-sudo mv wifi-connect /usr/local/sbin/
+# 1️⃣ Wifi-connect indir ve kur
+echo "Wifi-connect indiriliyor..."
+curl -L https://github.com/balena-os/wifi-connect/releases/download/v4.4.6/wifi-connect-v4.4.6-linux-aarch64.tar.gz -o /tmp/wifi-connect.tar.gz
+tar -xzf /tmp/wifi-connect.tar.gz -C /tmp
+sudo mv /tmp/wifi-connect /usr/local/sbin/
 sudo chmod +x /usr/local/sbin/wifi-connect
-rm -f wifi-connect.tar.gz
+echo "Wifi-connect kuruldu."
 
-# 3. Wrapper script oluşturuluyor
-echo "3. Wrapper script oluşturuluyor..."
+# 2️⃣ Wrapper script oluştur
+echo "Wrapper script oluşturuluyor..."
 cat << 'EOF' | sudo tee /usr/local/sbin/wifi-connect-wrapper.sh
 #!/bin/bash
-# === Wrapper Script for WiFi Connect ===
+# WiFi Connect Startup Script
 
-# RF-kill ve servisleri temizle
-sudo rfkill unblock all
-sudo systemctl stop hostapd 2>/dev/null || true
-sudo systemctl stop dnsmasq 2>/dev/null || true
-sudo killall dnsmasq 2>/dev/null || true
+log() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1"
+}
 
-# WiFi adaptörü resetle
-sudo nmcli radio wifi off
-sudo ip addr flush dev wlan0
-sudo ip link set wlan0 up
-sudo nmcli radio wifi on
+log "=== WiFi Connect Startup Başlatılıyor ==="
 
-# WiFi bağlantısı kontrolü
-if nmcli -t -f WIFI g | grep -q "enabled"; then
-    echo "$(date) - WiFi cihaz aktif, AP başlatılacak..."
-    sudo /usr/local/sbin/wifi-connect --portal-interface wlan0
-else
-    echo "$(date) - WiFi bağlı ve IP alınmış. AP başlatılmayacak."
-fi
+# Stop conflicting services
+systemctl stop hostapd 2>/dev/null
+systemctl stop dnsmasq 2>/dev/null
+killall dnsmasq 2>/dev/null
+
+# RF-kill unblock
+rfkill unblock all
+
+# Reset wlan0
+nmcli radio wifi off
+ip addr flush dev wlan0
+ip link set wlan0 up
+nmcli radio wifi on
+
+# Remove old WiFi Connect connections
+nmcli connection delete "WiFi Connect" 2>/dev/null
+
+# Make sure 192.168.42.1 is free
+ip addr del 192.168.42.1/24 dev wlan0 2>/dev/null
+
+# Start WiFi Connect
+log "WiFi Connect başlatılıyor..."
+/usr/local/sbin/wifi-connect --portal-interface wlan0
+
+log "WiFi Connect tamamlandı."
+exit 0
 EOF
 
 sudo chmod +x /usr/local/sbin/wifi-connect-wrapper.sh
+echo "Wrapper script hazır."
 
-# 4. Systemd servisi oluşturuluyor
-echo "4. Systemd servisi oluşturuluyor..."
-cat << 'EOF' | sudo tee /etc/systemd/system/wifi-connect.service
-[Unit]
-Description=WiFi Connect AP
-After=network.target
+# 3️⃣ Startup olarak ekle (rc.local)
+echo "Startup için /etc/rc.local ayarlanıyor..."
+sudo bash -c 'cat << EOF > /etc/rc.local
+#!/bin/bash
+/usr/local/sbin/wifi-connect-wrapper.sh &
+exit 0
+EOF'
 
-[Service]
-Type=simple
-ExecStart=/usr/local/sbin/wifi-connect-wrapper.sh
-Restart=on-failure
-RestartSec=5
+sudo chmod +x /etc/rc.local
+echo "Startup ayarlandı (/etc/rc.local)."
 
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# 5. Servis enable ve başlatılıyor
-sudo systemctl daemon-reload
-sudo systemctl enable --now wifi-connect.service
-
-echo "=== WiFi Connect kurulumu tamamlandı! ==="
+echo "=== WiFi Connect Setup Tamamlandı ==="
+echo "Makineyi yeniden başlattığınızda WiFi Connect otomatik olarak başlayacaktır."
