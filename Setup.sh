@@ -7,13 +7,19 @@ echo "=== WiFi Connect kurulumu başlatılıyor... ==="
 sudo apt update
 sudo apt install -y curl dnsmasq network-manager jq
 
-# wifi-connect'i indir ve kur
+# WiFi Connect binary'sini indir
 if [ ! -f /usr/local/bin/wifi-connect ]; then
     echo "WiFi Connect indiriliyor..."
-    curl -L https://github.com/balena-os/wifi-connect/releases/latest/download/wifi-connect-arm64.tar.gz -o /tmp/wifi-connect.tar.gz
-    tar -xzf /tmp/wifi-connect.tar.gz -C /tmp
-    sudo mv /tmp/wifi-connect /usr/local/bin/
-    sudo chmod +x /usr/local/bin/wifi-connect
+    ARCH=$(uname -m)
+    case "$ARCH" in
+        aarch64) FILE="wifi-connect-v4.4.2-linux-aarch64" ;;
+        armv7l)  FILE="wifi-connect-v4.4.2-linux-armv7hf" ;;
+        x86_64)  FILE="wifi-connect-v4.4.2-linux-x64" ;;
+        *) echo "Desteklenmeyen mimari: $ARCH"; exit 1 ;;
+    esac
+
+    curl -L -o /usr/local/bin/wifi-connect "https://github.com/balena-os/wifi-connect/releases/download/v4.4.2/$FILE"
+    chmod +x /usr/local/bin/wifi-connect
     echo "WiFi Connect başarıyla kuruldu."
 fi
 
@@ -24,14 +30,12 @@ set -e
 
 echo "$(date) - WiFi Connect servisi başlatılıyor..."
 
-# wlan0 var mı kontrol et
 IFACE="wlan0"
 if ! nmcli device | grep -q "$IFACE"; then
   echo "Wi-Fi arayüzü ($IFACE) bulunamadı!"
   exit 1
 fi
 
-# Aktif bağlantı yoksa WiFi Connect başlat
 if ! nmcli -t -f WIFI g | grep -q "enabled"; then
   nmcli radio wifi on
 fi
@@ -41,8 +45,7 @@ if [ -z "$CONNECTED" ]; then
   echo "Wi-Fi bağlantısı yok, erişim noktası başlatılıyor..."
   /usr/local/bin/wifi-connect \
     --portal-ssid "DeviceSetup" \
-    --portal-passphrase "12345678" \
-    --ui-directory /usr/local/share/wifi-connect/ui
+    --portal-passphrase "12345678"
 else
   echo "Wi-Fi zaten bağlı, erişim noktası başlatılmayacak."
 fi
@@ -50,7 +53,7 @@ EOF
 
 sudo chmod +x /usr/local/sbin/wifi-connect-wrapper.sh
 
-# systemd servisi oluştur
+# systemd servisini oluştur
 cat << 'EOF' | sudo tee /etc/systemd/system/wifi-connect.service > /dev/null
 [Unit]
 Description=WiFi Connect AP
@@ -67,7 +70,7 @@ User=root
 WantedBy=multi-user.target
 EOF
 
-# Servisi etkinleştir ve başlat
+# Servisi başlat
 sudo systemctl daemon-reload
 sudo systemctl enable wifi-connect.service
 sudo systemctl restart wifi-connect.service
