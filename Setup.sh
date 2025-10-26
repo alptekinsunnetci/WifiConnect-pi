@@ -4,7 +4,7 @@ set -e
 
 echo "=== WiFi Connect kurulumu başlatılıyor... ==="
 
-# 1. Gerekli paketlerin kurulumu
+# 1. Paketlerin kurulumu
 echo "1. Paketlerin kurulumu..."
 sudo apt update
 sudo apt install -y dnsmasq hostapd network-manager curl jq
@@ -55,6 +55,8 @@ else
     echo "WiFi bağlı değil veya IP yok. WiFi Connect AP başlatılıyor."
     /usr/local/bin/wifi-connect
 fi
+
+exit 0
 EOF
 
 sudo chmod +x /usr/local/sbin/wifi-connect-wrapper.sh
@@ -68,9 +70,9 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=oneshot
+Type=simple
 ExecStart=/usr/local/sbin/wifi-connect-wrapper.sh
-RemainAfterExit=yes
+Restart=no
 
 [Install]
 WantedBy=multi-user.target
